@@ -29,7 +29,7 @@ from .key_cache import KeyCacheEntry
 
 import socket
 import time
-from zeroconf import Zeroconf, ServiceBrowser, ServiceStateChange, ServiceInfo
+from zeroconf import Zeroconf, ServiceBrowser, ServiceListener, ServiceStateChange, ServiceInfo
 
 
 @define
@@ -91,16 +91,12 @@ def unmarshal_wireguard_key(value: str) -> WireguardKey:
 # ###############
 def discover_local_tier2_service(
     service_type: str = "cloudlet._sinfonia._tcp.local.",
-    timeout: float = 2.0
+    timeout: float = 10.0
 ) -> URL | None:
     """
     Discover a local Tier2 endpoint via mDNS for the specified service type.
     Returns the first discovered URL (http://host:port) or None if none found.
     """
-
-    # To find the name of the service type, use:
-    # from zeroconf import ZeroconfServiceTypes
-    # print('\n'.join(ZeroconfServiceTypes.find()))
 
     # Store discovered addresses here
     discovered_urls: list[URL] = []
@@ -109,17 +105,30 @@ def discover_local_tier2_service(
         # A listener to handle newly added services.
         def add_service(self, zeroconf: Zeroconf, service_type: str, name: str) -> None:
             info = zeroconf.get_service_info(service_type, name)
-            if info and info.addresses:
-                # Convert the raw byte address to dotted string
-                host = socket.inet_ntoa(info.addresses[0])
-                port = info.port
+            if info:
+                # Use IP from TXT records if available, otherwise use the address from mDNS
+                if b'ip' in info.properties:
+                    host = info.properties[b'ip'].decode('utf-8')
+                elif info.addresses:
+                    host = socket.inet_ntoa(info.addresses[0])
+                else:
+                    print("No host address found in service info.")
+                    return
 
-                url = URL.build(scheme="http", host=host, port=port)
+                url = URL.build(scheme="http", host=host)
                 discovered_urls.append(url)
+        
+        def remove_service(self, zeroconf: Zeroconf, service_type: str, name: str) -> None:
+            # Handle service removal if needed
+            print(f"Service {name} removed")
+        def update_service(
+            self, zeroconf: Zeroconf, service_type: str, name: str, state_change: ServiceStateChange
+        ) -> None:
+            # Handle service update if needed
+            print(f"Service {name} updated")
 
     zc = Zeroconf()
     listener = CloudletListener()
-    ################# Maybe service type isn't supppoesd to be static?
     browser = ServiceBrowser(zc, service_type, listener=listener)
 
     # Wait briefly to see if we discover anything
